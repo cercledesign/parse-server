@@ -364,6 +364,21 @@ describe_only_db('mongo')('MongoStorageAdapter', () => {
     expect(schemaAfterDeletion.fields.test).toBeUndefined();
   });
 
+  it('should create unique index', async () => {
+    const database = Config.get(Parse.applicationId).database;
+    const obj = new Parse.Object('MyObject');
+    obj.set('test', 1);
+    await obj.save();
+    new Parse.Schema('MyObject').addIndex('MyObject_test_1', {
+      test: 1,
+      __op: 'AddUnique',
+    });
+
+    const postIndexPlan = await database.find('MyObject', { test: 1 });
+
+    expect(postIndexPlan[0].test).toEqual(1);
+  });
+
   if (
     semver.satisfies(process.env.MONGODB_VERSION, '>=4.0.4') &&
     process.env.MONGODB_TOPOLOGY === 'replicaset' &&

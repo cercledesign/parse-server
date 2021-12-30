@@ -253,6 +253,7 @@ export class MongoStorageAdapter implements StorageAdapter {
     }
     const deletePromises = [];
     const insertedIndexes = [];
+    const uniqueIndexes = [];
     Object.keys(submittedIndexes).forEach(name => {
       const field = submittedIndexes[name];
       if (existingIndexes[name] && field.__op !== 'Delete') {
@@ -268,6 +269,12 @@ export class MongoStorageAdapter implements StorageAdapter {
         const promise = this.dropIndex(className, name);
         deletePromises.push(promise);
         delete existingIndexes[name];
+      } else if (field.__op === 'AddUnique') {
+        // __op: 'AddUnique' is added by Cercle's
+        // schema:update script to mark unique indexes
+        delete field.__op;
+        existingIndexes[name] = field;
+        uniqueIndexes.push({ key: field, name });
       } else {
         Object.keys(field).forEach(key => {
           if (
@@ -290,10 +297,24 @@ export class MongoStorageAdapter implements StorageAdapter {
       }
     });
     let insertPromise = Promise.resolve();
+    const insertUniquePromises = [];
     if (insertedIndexes.length > 0) {
       insertPromise = this.createIndexes(className, insertedIndexes);
     }
+    uniqueIndexes.forEach(index =>
+      insertUniquePromises.push(
+        this.ensureUniqueness(
+          className,
+          {
+            fields: index.key,
+          },
+          Object.keys(index.key),
+          index.name
+        )
+      )
+    );
     return Promise.all(deletePromises)
+      .then(() => Promise.all(insertUniquePromises))
       .then(() => insertPromise)
       .then(() => this._schemaCollection())
       .then(schemaCollection =>
@@ -676,7 +697,13 @@ export class MongoStorageAdapter implements StorageAdapter {
   // As such, we shouldn't expose this function to users of parse until we have an out-of-band
   // Way of determining if a field is nullable. Undefined doesn't count against uniqueness,
   // which is why we use sparse indexes.
-  ensureUniqueness(className: string, schema: SchemaType, fieldNames: string[]) {
+  // Pass the indexName as an optional 4th parameter, to not break existing usages of this function
+  ensureUniqueness(
+    className: string,
+    schema: SchemaType,
+    fieldNames: string[],
+    indexName?: string
+  ) {
     schema = convertParseSchemaToMongoSchema(schema);
     const indexCreationRequest = {};
     const mongoFieldNames = fieldNames.map(fieldName => transformKey(className, fieldName, schema));
@@ -684,7 +711,9 @@ export class MongoStorageAdapter implements StorageAdapter {
       indexCreationRequest[fieldName] = 1;
     });
     return this._adaptiveCollection(className)
-      .then(collection => collection._ensureSparseUniqueIndexInBackground(indexCreationRequest))
+      .then(collection =>
+        collection._ensureSparseUniqueIndexInBackground(indexCreationRequest, indexName)
+      )
       .catch(error => {
         if (error.code === 11000) {
           throw new Parse.Error(
