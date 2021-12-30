@@ -159,11 +159,21 @@ export default class MongoCollection {
     return this._mongoCollection.deleteMany(query, { session });
   }
 
-  _ensureSparseUniqueIndexInBackground(indexRequest) {
+  // An optional second parameter to pass down the uniqueIndexName
+  // Needed as Parse Server manages its own index metadata its record has to
+  // match the index names in the db
+  // TODO: Pass it in first parameter be default?
+  // Perhaps by constructing the first parameter to createIndex below manually
+  _ensureSparseUniqueIndexInBackground(indexRequest, uniqueIndexName) {
     return new Promise((resolve, reject) => {
       this._mongoCollection.createIndex(
         indexRequest,
-        { unique: true, background: true, sparse: true },
+        {
+          unique: true,
+          background: true,
+          sparse: true,
+          ...(uniqueIndexName ? { name: uniqueIndexName } : {}),
+        },
         error => {
           if (error) {
             reject(error);
